@@ -1,0 +1,17 @@
+{
+  "name": "@retail/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --alias:@retail/contracts=../../packages/contracts/src/index.ts --outdir=dist",
+    "start": "node --env-file=.env dist/server.js"
+  },
+  "dependencies": {
+    "@retail/contracts": "workspace:*",
+    "fastify": "5.12.5",
+    "@supabase/supabase-js": "2.117.2",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {}
+}

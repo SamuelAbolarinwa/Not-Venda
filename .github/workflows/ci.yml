@@ -1,0 +1,26 @@
+name: Foundation checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - run: pnpm db:start
+      - run: pnpm db:reset
+      - run: pnpm db:test
+      - run: pnpm test:integration
+      - run: pnpm db:types && git diff --exit-code -- packages/contracts/src/database.ts && test -z "$(git status --porcelain -- packages/contracts/src/database.ts)"
+      - if: always()
+        run: pnpm exec supabase stop --no-backup
