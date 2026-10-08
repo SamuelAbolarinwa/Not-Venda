@@ -10,6 +10,7 @@
     "esModuleInterop": true,
     "skipLibCheck": false,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["apps", "packages", "scripts"]

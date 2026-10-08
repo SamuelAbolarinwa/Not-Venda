@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import prettier from "prettier";
 import { z } from "zod";
 import {
   shopInput,
@@ -10,7 +11,7 @@ import {
   product,
   errorEnvelope,
   uuid,
-} from "../src/index";
+} from "../src/index.ts";
 const schema = (value: z.ZodType) =>
   z.toJSONSchema(value, { unrepresentable: "throw" });
 const response = (value: z.ZodType, description = "Success") => ({
@@ -141,5 +142,5 @@ const paths = {
 };
 writeFileSync(
   "docs/openapi.json",
-  JSON.stringify({ ...base, paths }, null, 2) + "\n",
+  await prettier.format(JSON.stringify({ ...base, paths }), { parser: "json" }),
 );

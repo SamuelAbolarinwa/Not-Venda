@@ -50,3 +50,36 @@ Initial checks found and fixed malformed-money refinement throwing instead of re
 No production account is required for local build/tests. Samuel needs a working Docker registry connection and local stack. After review and separate staging authorisation, he must create/select the staging Supabase project, configure confirmed-email policy, SMTP, authorised site/redirect URLs and public API configuration. Never copy local seed users/passwords to staging. Partner credentials/WhatsApp linking and Groq/N-ATLAS setup are later packets, not Packet 1 blockers.
 
 Product creation is atomic but not replay-safe in this packet; UI warns after uncertain failure and does not retry automatically. Staff invitation, role changes and revocation workflows are explicitly planned in Packet 2. All future transaction, ledger, sales, stock, offline and assistant execution work remains unimplemented.
+
+## Continuation diagnosis on 8 October 2026
+
+The exact failing image is `public.ecr.aws/supabase/postgres:17.11.0.004`, requested by Supabase CLI 2.120.0 for PostgreSQL major version 17. Docker client and server 29.1.3 are healthy on Ubuntu 24.04. DNS resolves `public.ecr.aws`, `ghcr.io` and `registry-1.docker.io`. The Docker daemon reports no configured HTTP or HTTPS proxy.
+
+A bounded HTTPS probe to `https://public.ecr.aws/v2/` completed TLS in 0.76 seconds and returned the expected anonymous HTTP 401. Equivalent GHCR and Docker Hub probes timed out. `docker manifest inspect` reached the exact PostgreSQL tag and then timed out fetching blob metadata, so this is not an unavailable tag, authentication error or invalid Supabase configuration. Two targeted pulls cached most layers but ended respectively with:
+
+- `read: connection reset by peer` while copying from `public.ecr.aws`;
+- `TLS handshake timeout` for blob `sha256:c8ac8c694472083010dc00aa77d79889a9e9bce3934a94bdad828e338b2ab12b`.
+
+The latest npm-published CLI is already 2.120.0. Although current Supabase documentation describes an experimental native runtime, this CLI build exposes no `stack` command, so it is not an available fallback in this checkout. Repeated pulls were stopped after the evidence above. The smallest external action is to restore stable outbound HTTPS for the Docker daemon to `public.ecr.aws` (and preferably `ghcr.io`/Docker Hub), or pre-pull the exact PostgreSQL image on this daemon. Then rerun `pnpm db:start`; the remaining database, type-generation, live API and browser checks must still be executed.
+
+Independent UI review found and corrected two live-flow risks: a synchronous in-flight guard now prevents rapid duplicate form submissions from creating separate onboarding request IDs, and catalogue rows are bound to the selected shop/page so a previous shop cannot flash while the next request loads. These corrections pass application type checking and tests but have not been exercised against local Auth because the stack remains unavailable.
+
+## Continuation verification results
+
+The following results are from the continuation work after commit `1cf681e`:
+
+| Command                                    | Result                                                                                                                                             |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile --offline` | Passed; lockfile is current.                                                                                                                       |
+| `pnpm format:check`                        | Passed after formatting the UI correction.                                                                                                         |
+| `pnpm lint`                                | Passed.                                                                                                                                            |
+| `pnpm typecheck`                           | Passed with strict checking and dependency declarations included.                                                                                  |
+| `pnpm test`                                | Passed: 14 tests in two files.                                                                                                                     |
+| `pnpm build`                               | Passed: contracts, API bundle and Vite production build.                                                                                           |
+| `pnpm docs:api`                            | Passed. It now uses Node 24's native TypeScript support instead of a sandbox-sensitive `tsx` IPC socket, and emits stable Prettier-formatted JSON. |
+| `pnpm db:reset`                            | Blocked: `supabase start is not running`.                                                                                                          |
+| `pnpm db:test`                             | Blocked: connection refused on `127.0.0.1:54322`; zero pgTAP assertions executed.                                                                  |
+| `pnpm test:integration`                    | Blocked during suite setup because `supabase_db_not-venda-local` does not exist; zero live API tests executed.                                     |
+| `pnpm db:types`                            | Blocked: `GenTypesLocalDbNotRunningError`; no generated types were created or represented as generated.                                            |
+
+The required registration, confirmation, login/restoration, logout, recovery/update, onboarding, product, salesperson, shop-switching, inactive-member and narrow-mobile browser flows remain unexecuted because they require the real local Auth/API/database stack. The earlier sign-in screenshot is not counted as authentication verification. GitHub Actions remains authored but has not run.

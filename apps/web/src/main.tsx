@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createClient, type Session } from "@supabase/supabase-js";
 import {
@@ -30,6 +30,7 @@ function App() {
     [shops, setShops] = useState<Shop[]>([]),
     [selected, setSelected] = useState(""),
     [products, setProducts] = useState<Product[]>([]),
+    [catalogueScope, setCatalogueScope] = useState<string | null>(null),
     [offset, setOffset] = useState(0),
     [loading, setLoading] = useState(false),
     [hasMore, setHasMore] = useState(false),
@@ -45,6 +46,7 @@ function App() {
       },
     );
   const [adding, setAdding] = useState(false);
+  const actionInFlight = useRef(false);
   useEffect(() => {
     if (!auth) {
       setRestoring(false);
@@ -59,6 +61,7 @@ function App() {
         setMe(null);
         setShops([]);
         setProducts([]);
+        setCatalogueScope(null);
         setSelected("");
       }
     });
@@ -132,6 +135,8 @@ function App() {
     let cancelled = false;
     setLoading(true);
     setProducts([]);
+    setCatalogueScope(null);
+    const requestedScope = `${selected}:${offset}`;
     void api(
       `/shops/${selected}/catalogue?limit=30&offset=${offset}`,
       catalogueList,
@@ -139,6 +144,7 @@ function App() {
       .then((result) => {
         if (!cancelled) {
           setProducts(result.items);
+          setCatalogueScope(requestedScope);
           setHasMore(result.items.length === 30);
         }
       })
@@ -149,6 +155,8 @@ function App() {
     };
   }, [selected, offset, refresh, session?.user.id]);
   async function act(work: () => Promise<void>) {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -164,6 +172,7 @@ function App() {
             : "Please try again.",
       );
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   }
@@ -285,6 +294,8 @@ function App() {
   const owner = me?.memberships.some(
     (m) => m.shop_id === selected && m.role === "owner",
   );
+  const visibleProducts =
+    catalogueScope === `${selected}:${offset}` ? products : [];
   return (
     <>
       <header>
@@ -575,7 +586,7 @@ function App() {
                     )}
                     {loading ? (
                       <p role="status">Loading your catalogue…</p>
-                    ) : products.length === 0 ? (
+                    ) : visibleProducts.length === 0 ? (
                       <div className="empty panel">
                         <span>▦</span>
                         <h3>
@@ -589,7 +600,7 @@ function App() {
                       </div>
                     ) : (
                       <div className="catalogue">
-                        {products.map((p) => (
+                        {visibleProducts.map((p) => (
                           <article className="product" key={p.id}>
                             <div className="product-icon">
                               {p.name.slice(0, 1).toUpperCase()}

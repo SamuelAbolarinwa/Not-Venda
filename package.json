@@ -19,7 +19,7 @@
     "db:reset": "supabase db reset --local",
     "db:test": "supabase test db",
     "db:types": "node scripts/generate-types.mjs",
-    "docs:api": "tsx packages/contracts/scripts/openapi.ts"
+    "docs:api": "node packages/contracts/scripts/openapi.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

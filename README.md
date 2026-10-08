@@ -40,6 +40,17 @@ pnpm exec supabase stop
 
 `pnpm dev` runs both apps. Vite proxies `/v1` to the API. The API build emits a Node ESM bundle; run it with `pnpm --filter @retail/api start` after configuration. Hosted deployment and routing belong to Packet 5. Environment files are ignored; `.env.example` files contain no credentials.
 
+### Local image-download troubleshooting
+
+The first `pnpm db:start` downloads the local stack images and therefore needs stable outbound HTTPS from the Docker daemon. Docker must be able to pull the pinned PostgreSQL image directly:
+
+```sh
+docker pull public.ecr.aws/supabase/postgres:17.11.0.004
+pnpm db:start
+```
+
+If the pull ends in a TLS handshake timeout, connection timeout or TCP reset, the migrations have not run. Restore registry connectivity or pre-pull that exact image on the same Docker daemon, then rerun `pnpm db:start`. Do not disable TLS verification. `pnpm db:reset`, `pnpm db:test`, `pnpm test:integration` and `pnpm db:types` require the local stack to be running. Supabase's current local-development guide confirms that the first start downloads the Docker images: <https://supabase.com/docs/guides/local-development/cli/getting-started>.
+
 ## Configuration
 
 API `apps/api/.env`: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (public anon/publishable key), `PORT` (3001). Web `apps/web/.env`: `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (public only). Application code has no service key variable. Integration tests discover local public settings via CLI and never need production credentials. Public keys may appear in the web bundle; secret/service keys must never be put in VITE variables.
