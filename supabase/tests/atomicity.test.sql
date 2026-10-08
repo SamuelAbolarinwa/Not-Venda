@@ -10,7 +10,7 @@ reset role;
 select is((select count(*)::integer from public.shops where name='Must roll back'),0,'No orphan shop');
 select is((select count(*)::integer from public.memberships m left join public.shops s on s.id=m.shop_id where s.id is null),0,'No orphan membership');
 set local role authenticated;
-select throws_ok($$select public.create_product('20000000-0000-4000-8000-000000000001',gen_random_uuid(),'{"name":"Bad product","base_unit":"piece","amount_kobo":"9223372036854775808","aliases":["new alias"],"units":[{"name":"piece","multiplier":1}]}')$$,'22003',null,'Overflow after dependent inserts fails');
+select throws_ok($$select public.create_product('20000000-0000-4000-8000-000000000001',gen_random_uuid(),'{"name":"Bad product","base_unit":"piece","amount_kobo":"9223372036854775808","aliases":["new alias"],"units":[{"name":"piece","multiplier":1}]}')$$,'22023',null,'Overflow is rejected before dependent inserts');
 reset role;
 select is((select count(*)::integer from public.products where name='Bad product'),0,'Product rolled back');
 select is((select count(*)::integer from public.product_aliases where alias='new alias'),0,'Alias rolled back');

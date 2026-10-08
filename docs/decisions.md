@@ -23,3 +23,11 @@ Pin Node 24.13.0 and pnpm 10.28.2, lock dependency resolution. Fastify 5 and Vit
 ## ADR 006 — Compiler compatibility (accepted)
 
 TypeScript 7.0.2 is incompatible with typescript-eslint 8.71.1. TypeScript 6.0.3 also exposes a conflicting WebAuthn declaration in Supabase Auth 2.117.2. Pin TypeScript 5.9.3, which passes full application and dependency declaration checking (`skipLibCheck: false`). Do not suppress these errors or weaken strictness. Upgrade the compiler after upstream compatibility is verified.
+
+## ADR 007 — Actor-scoped onboarding recovery (accepted)
+
+Persist a pending shop request only after shared-schema validation, under a versioned key containing the verified actor UUID. The stored value repeats the actor UUID and is parsed strictly before use. Network failures, timeouts and lost responses preserve the canonical name/request UUID because the database may already have committed; only a definitive `400 INVALID_INPUT` unlocks that request for correction. Identity changes clear account UI state and make late handlers inert. Legacy, malformed and actor-mismatched storage is discarded rather than submitted.
+
+## ADR 008 — Database RPC validates the public contract (accepted)
+
+The owner RPC remains callable by ordinary authenticated users, so it enforces the complete product shape independently of Fastify. A follow-up migration replaces the function with strict top-level/nested field allowlists, optional-field type checks, canonical trimming and duplicate detection, integer multiplier limits and decimal-string BIGINT validation. It validates the whole payload before inserts; PostgreSQL statement/transaction atomicity remains the final partial-write guard. The follow-up preserves already-initialised local migration histories.

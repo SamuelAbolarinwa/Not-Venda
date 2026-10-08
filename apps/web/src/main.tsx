@@ -13,10 +13,31 @@ import {
   type Shop,
 } from "@retail/contracts";
 import { z, createdProduct } from "@retail/contracts";
+import {
+  clearPendingOnboarding,
+  discardLegacyOnboarding,
+  getOrCreatePendingOnboarding,
+  isDefinitiveOnboardingValidationRejection,
+  loadPendingOnboarding,
+  type PendingOnboarding,
+} from "./onboarding";
 import "./style.css";
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const auth = url && key ? createClient(url, key) : null;
+
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+class ActorChangedError extends Error {}
+
 function App() {
   const [session, setSession] = useState<Session | null>(null),
     [restoring, setRestoring] = useState(true),
@@ -36,17 +57,10 @@ function App() {
     [hasMore, setHasMore] = useState(false),
     [refresh, setRefresh] = useState(0);
   const [shopName, setShopName] = useState(""),
-    [onboarding, setOnboarding] = useState<{ id: string; name: string } | null>(
-      () => {
-        try {
-          return JSON.parse(sessionStorage.getItem("onboarding") ?? "null");
-        } catch {
-          return null;
-        }
-      },
-    );
+    [onboarding, setOnboarding] = useState<PendingOnboarding | null>(null);
   const [adding, setAdding] = useState(false);
-  const actionInFlight = useRef(false);
+  const actionInFlight = useRef<symbol | null>(null);
+  const activeActor = useRef<string | null>(null);
   useEffect(() => {
     if (!auth) {
       setRestoring(false);
@@ -55,6 +69,7 @@ function App() {
     const {
       data: { subscription },
     } = auth.auth.onAuthStateChange((event, s) => {
+      activeActor.current = s?.user.id ?? null;
       setSession(s);
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
       if (!s) {
@@ -74,7 +89,10 @@ function App() {
         if (verified.error) {
           await auth!.auth.signOut({ scope: "local" });
           setMessage("Your session has expired. Please sign in again.");
-        } else setSession(data.session);
+        } else {
+          activeActor.current = data.session.user.id;
+          setSession(data.session);
+        }
       }
       setRestoring(false);
     });
@@ -84,9 +102,12 @@ function App() {
     path: string,
     schema: z.ZodType<T>,
     body?: unknown,
+    expectedActorId?: string,
   ): Promise<T> {
     const { data } = await auth!.auth.getSession();
     if (!data.session) throw Error("Please sign in again.");
+    if (expectedActorId && data.session.user.id !== expectedActorId)
+      throw new ActorChangedError();
     const response = await fetch(`/v1${path}`, {
       method: body ? "POST" : "GET",
       headers: {
@@ -95,24 +116,59 @@ function App() {
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    if (expectedActorId && activeActor.current !== expectedActorId)
+      throw new ActorChangedError();
     const result = await response.json();
+    if (expectedActorId && activeActor.current !== expectedActorId)
+      throw new ActorChangedError();
     if (!response.ok) {
-      if (response.status === 401) await auth!.auth.signOut({ scope: "local" });
-      throw Error(
+      if (response.status === 401) {
+        setMessage("Your session has expired. Please sign in again.");
+        await auth!.auth.signOut({ scope: "local" });
+      }
+      throw new ApiError(
+        response.status,
+        typeof result.code === "string" ? result.code : "REQUEST_FAILED",
         `${result.message ?? "Request failed"}${result.request_id ? ` (reference ${result.request_id})` : ""}`,
       );
     }
     return schema.parse(result);
   }
   useEffect(() => {
+    const actorId = session?.user.id ?? null;
+    activeActor.current = actorId;
+    actionInFlight.current = null;
+    setBusy(false);
+    if (actorId) setMessage("");
+    setMe(null);
+    setShops([]);
+    setSelected("");
+    setProducts([]);
+    setCatalogueScope(null);
+    setOffset(0);
+    setHasMore(false);
+    setAdding(false);
+    setShopName("");
+    discardLegacyOnboarding(sessionStorage);
+    setOnboarding(
+      actorId ? loadPendingOnboarding(sessionStorage, actorId) : null,
+    );
+  }, [session?.user.id]);
+  useEffect(() => {
     if (!session || recovery) return;
+    const actorId = session.user.id;
     let cancelled = false;
     setLoading(true);
     void (async () => {
-      const account = await api("/me", meResponse);
+      const account = await api("/me", meResponse, undefined, actorId);
       const all: Shop[] = [];
       for (let page = 0; ; page += 100) {
-        const result = await api(`/shops?limit=100&offset=${page}`, shopList);
+        const result = await api(
+          `/shops?limit=100&offset=${page}`,
+          shopList,
+          undefined,
+          actorId,
+        );
         all.push(...result.items);
         if (result.items.length < 100) break;
       }
@@ -132,6 +188,7 @@ function App() {
   }, [session?.user.id, recovery, refresh]);
   useEffect(() => {
     if (!selected || !session) return;
+    const actorId = session.user.id;
     let cancelled = false;
     setLoading(true);
     setProducts([]);
@@ -140,6 +197,8 @@ function App() {
     void api(
       `/shops/${selected}/catalogue?limit=30&offset=${offset}`,
       catalogueList,
+      undefined,
+      actorId,
     )
       .then((result) => {
         if (!cancelled) {
@@ -155,25 +214,32 @@ function App() {
     };
   }, [selected, offset, refresh, session?.user.id]);
   async function act(work: () => Promise<void>) {
-    if (actionInFlight.current) return;
-    actionInFlight.current = true;
+    if (actionInFlight.current !== null) return;
+    const action = Symbol("action");
+    actionInFlight.current = action;
     setBusy(true);
     setMessage("");
     try {
       await work();
     } catch (e) {
-      setMessage(
-        e instanceof z.ZodError
-          ? e.issues
-              .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-              .join("; ")
-          : e instanceof Error
-            ? e.message
-            : "Please try again.",
-      );
+      if (
+        actionInFlight.current === action &&
+        !(e instanceof ActorChangedError)
+      )
+        setMessage(
+          e instanceof z.ZodError
+            ? e.issues
+                .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+                .join("; ")
+            : e instanceof Error
+              ? e.message
+              : "Please try again.",
+        );
     } finally {
-      actionInFlight.current = false;
-      setBusy(false);
+      if (actionInFlight.current === action) {
+        actionInFlight.current = null;
+        setBusy(false);
+      }
     }
   }
   async function authenticate(event: React.FormEvent<HTMLFormElement>) {
@@ -222,18 +288,35 @@ function App() {
   }
   async function createShop(e: React.FormEvent) {
     e.preventDefault();
+    const actorId = session?.user.id;
+    if (!actorId) return;
     await act(async () => {
-      const pending = onboarding ?? {
-        id: crypto.randomUUID(),
-        name: shopName.trim(),
-      };
+      const pending = getOrCreatePendingOnboarding(
+        sessionStorage,
+        actorId,
+        shopName,
+        () => crypto.randomUUID(),
+      );
       setOnboarding(pending);
-      sessionStorage.setItem("onboarding", JSON.stringify(pending));
-      const result = await api("/shops", shop, {
-        request_id: pending.id,
-        name: pending.name,
-      });
-      sessionStorage.removeItem("onboarding");
+      let result: Shop;
+      try {
+        result = await api(
+          "/shops",
+          shop,
+          { request_id: pending.request_id, name: pending.name },
+          actorId,
+        );
+      } catch (error) {
+        if (activeActor.current !== actorId) throw new ActorChangedError();
+        if (isDefinitiveOnboardingValidationRejection(error)) {
+          clearPendingOnboarding(sessionStorage, actorId);
+          setOnboarding(null);
+          setShopName(pending.name);
+        }
+        throw error;
+      }
+      if (activeActor.current !== actorId) throw new ActorChangedError();
+      clearPendingOnboarding(sessionStorage, actorId);
       setOnboarding(null);
       setShopName("");
       setSelected(result.id);
@@ -244,6 +327,8 @@ function App() {
   }
   async function createProduct(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const actorId = session?.user.id;
+    if (!actorId) return;
     const form = e.currentTarget;
     const data = new FormData(form);
     await act(async () => {
@@ -276,14 +361,21 @@ function App() {
       });
       // Product creation is not replay-safe: don't automatically retry an uncertain POST.
       try {
-        await api(`/shops/${selected}/products`, createdProduct, input);
+        await api(
+          `/shops/${selected}/products`,
+          createdProduct,
+          input,
+          actorId,
+        );
       } catch (e) {
+        if (activeActor.current !== actorId) throw new ActorChangedError();
         setRefresh((v) => v + 1);
         throw Error(
           `${e instanceof Error ? e.message : "Request failed"}. Check the catalogue before resubmitting; the product may have been saved.`,
           { cause: e },
         );
       }
+      if (activeActor.current !== actorId) throw new ActorChangedError();
       form.reset();
       setAdding(false);
       setOffset(0);
@@ -314,7 +406,6 @@ function App() {
               void act(async () => {
                 const { error } = await auth!.auth.signOut();
                 if (error) throw error;
-                sessionStorage.removeItem("onboarding");
                 setOnboarding(null);
               })
             }

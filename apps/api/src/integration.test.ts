@@ -14,6 +14,12 @@ const url = String(status.API_URL);
 if (!/^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(url))
   throw Error("Tests require the disposable local Supabase stack");
 const key = String(status.ANON_KEY);
+if (
+  typeof status.SERVICE_ROLE_KEY !== "string" ||
+  status.SERVICE_ROLE_KEY.length === 0
+)
+  throw Error("Local service-role key is required for test fixtures");
+const serviceKey = status.SERVICE_ROLE_KEY;
 const app = buildApp({ supabaseUrl: url, supabaseKey: key });
 const shopA = "20000000-0000-4000-8000-000000000001",
   shopB = "20000000-0000-4000-8000-000000000002";
@@ -233,6 +239,45 @@ describe("real Supabase Auth, API and RLS", () => {
       headers: headers("owner.a"),
     });
     expect(forbidden.statusCode).toBe(403);
+  });
+  it("rejects the same valid token immediately after membership revocation", async () => {
+    const before = await app.inject({
+      url: `/v1/shops/${shopB}/catalogue`,
+      headers: headers("staff.b"),
+    });
+    expect(before.statusCode).toBe(200);
+
+    // Privileged writes are confined to this disposable fixture transition.
+    const fixtureAdmin = createClient(url, serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const revoke = await fixtureAdmin
+      .from("memberships")
+      .update({ active: false })
+      .eq("shop_id", shopB)
+      .eq("user_id", "10000000-0000-4000-8000-000000000004");
+    expect(revoke.error).toBeNull();
+
+    try {
+      const denied = await app.inject({
+        url: `/v1/shops/${shopB}/catalogue`,
+        headers: headers("staff.b"),
+      });
+      expect(denied.statusCode).toBe(403);
+    } finally {
+      const restore = await fixtureAdmin
+        .from("memberships")
+        .update({ active: true })
+        .eq("shop_id", shopB)
+        .eq("user_id", "10000000-0000-4000-8000-000000000004");
+      expect(restore.error).toBeNull();
+    }
+
+    const restored = await app.inject({
+      url: `/v1/shops/${shopB}/catalogue`,
+      headers: headers("staff.b"),
+    });
+    expect(restored.statusCode).toBe(200);
   });
   it("has dependency-aware readiness", async () =>
     expect((await app.inject("/health/ready")).statusCode).toBe(200));
