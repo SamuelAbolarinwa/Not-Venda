@@ -94,3 +94,19 @@ The required registration, confirmation, login/restoration, logout, recovery/upd
 - The live API suite now obtains access while `staff.b` is active, revokes membership with a service-role client confined to the disposable test, verifies the same access token receives 403, restores the fixture and verifies access returns.
 
 The current Docker check still reports no local `public.ecr.aws/supabase/postgres:17.11.0.004` image. Per the earlier diagnosis, no identical pull was repeated. Fresh database commands remain blocked exactly as follows: reset reports `ResetLocalDbNotRunningError`; pgTAP gets `ECONNREFUSED` on port 54322; integration collection reports no `supabase_db_not-venda-local` container; type generation reports `GenTypesLocalDbNotRunningError`. No generated database type file exists, and no authenticated browser flow is claimed.
+
+## Handover verification checkpoint — 24 October 2026
+
+Prior to branch publication and handover for migration to Google AI Studio, the codebase was inspected and lightweight verification was rerun in the current environment:
+
+| Command                                                                        | Result            | Notes                                                                                           |
+| ------------------------------------------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------- |
+| `pnpm format:check`                                                            | PASSED            | All matched files use Prettier code style.                                                      |
+| `pnpm lint`                                                                    | PASSED            | ESLint completed with 0 errors / 0 warnings.                                                    |
+| `pnpm typecheck`                                                               | PASSED            | Strict TypeScript 5.9.3 typecheck completed with 0 errors (`skipLibCheck: false`).              |
+| `pnpm test`                                                                    | PASSED            | 19 tests passed across 3 test files (`onboarding.test.ts`, `contracts.test.ts`, `app.test.ts`). |
+| `pnpm build`                                                                   | PASSED            | Fastify API ESM bundle and Vite web client build completed successfully.                        |
+| `pnpm docs:api`                                                                | PASSED            | Generated OpenAPI schema is consistent and formatted.                                           |
+| `supabase db:start` / `db:reset` / `db:test` / `test:integration` / `db:types` | NOT RUN / BLOCKED | Local Docker image download blocker remains in place; no blocked pull was repeated.             |
+
+No .env files were committed or staged. Working tree was verified clean before handover document creation.
